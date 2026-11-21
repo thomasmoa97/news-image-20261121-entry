@@ -1,249 +1,274 @@
 #!/usr/bin/env python3
-"""World News, 21 November 2026 — one-page newspaper infographic, 1024x1024.
+"""One-page newspaper for Saturday 21 November 2026, drawn at 1024x1024.
 
-Draws the day's world news with Pillow only (no network, no randomness,
-no timestamps), so both grading runs write identical bytes.
+The program needs Pillow and nothing else: no network access, no clock,
+no random numbers, so running it twice produces byte-identical output.
 
-Hero: Russia's biggest barrage of the war on Ukraine — 400+ drones and
-110 missiles — with two missiles coming down in Poland. Below: six more
-of the day's biggest stories, then a ticker of the rest.
+Front page: Russia's biggest barrage of the war on Ukraine, with two
+missiles coming down in Poland. Under it, six more stories of the day
+plus a ticker of the rest.
 """
 import math
 import os
 import sys
 
-OUT_DIR = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+OUT = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
 
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:  # pragma: no cover - sandbox fallback
     import shutil
 
-    here = os.path.dirname(os.path.abspath(__file__))
-    os.makedirs(OUT_DIR, exist_ok=True)
-    shutil.copyfile(
-        os.path.join(here, "entry.png"),
-        os.path.join(OUT_DIR, "entry.png"),
-    )
+    _here = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(OUT, exist_ok=True)
+    shutil.copyfile(os.path.join(_here, "entry.png"),
+                    os.path.join(OUT, "entry.png"))
     sys.exit(0)
 
-W, H = 1024, 1024
-PAPER = (246, 241, 231)
-CARD = (255, 253, 248)
-INK = (25, 25, 25)
-RED = (163, 22, 33)
-NAVY = (31, 58, 95)
-TEAL = (15, 118, 110)
-AMBER = (180, 83, 9)
-SLATE = (71, 85, 105)
-INDIGO = (55, 48, 163)
-GREY = (110, 104, 90)
-RULE = (216, 210, 196)
-FLAG_BLUE = (60, 59, 110)
+PAGE_W = 1024
+PAGE_H = 1024
+MARGIN = 28
 
-SERIF_B = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
-SERIF = "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
-SANS_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+PAL = {
+    "paper": (246, 241, 231),
+    "panel": (255, 253, 248),
+    "ink": (25, 25, 25),
+    "red": (163, 22, 33),
+    "navy": (31, 58, 95),
+    "teal": (15, 118, 110),
+    "amber": (180, 83, 9),
+    "slate": (71, 85, 105),
+    "indigo": (55, 48, 163),
+    "grey": (110, 104, 90),
+    "rule": (216, 210, 196),
+    "ticker": (233, 227, 212),
+    "soft": (60, 60, 60),
+    "white": (255, 255, 255),
+}
+
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 
 
-def font(path, size):
+def load(path, size):
     return ImageFont.truetype(path, size)
 
 
-def wrap(draw, text, fnt, max_w):
-    """Greedy word wrap; returns a list of lines that fit max_w."""
-    words = text.split()
-    lines, cur = [], ""
-    for word in words:
-        trial = f"{cur} {word}".strip()
-        if draw.textlength(trial, font=fnt) <= max_w:
-            cur = trial
+def serif_b(size):
+    return load(FONT_DIR + "/DejaVuSerif-Bold.ttf", size)
+
+
+def serif(size):
+    return load(FONT_DIR + "/DejaVuSerif.ttf", size)
+
+
+def sans_b(size):
+    return load(FONT_DIR + "/DejaVuSans-Bold.ttf", size)
+
+
+def sans(size):
+    return load(FONT_DIR + "/DejaVuSans.ttf", size)
+
+
+def split_lines(draw, text, fnt, width):
+    """Split text into as few lines as fit inside width (greedy)."""
+    out = []
+    current = ""
+    for word in text.split():
+        candidate = word if not current else current + " " + word
+        if draw.textlength(candidate, font=fnt) <= width:
+            current = candidate
         else:
-            if cur:
-                lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
-    return lines
+            out.append(current)
+            current = word
+    if current:
+        out.append(current)
+    return out
 
 
-def centered(draw, cx, y, text, fnt, fill=INK):
-    draw.text((cx - draw.textlength(text, font=fnt) / 2, y), text, font=fnt, fill=fill)
+def put_centered(draw, text, y, fnt, cx, fill):
+    half = draw.textlength(text, font=fnt) / 2
+    draw.text((cx - half, y), text, font=fnt, fill=fill)
 
 
-def star(draw, cx, cy, r, fill):
-    """Five-pointed star polygon."""
-    pts = []
-    for i in range(10):
-        ang = -math.pi / 2 + i * math.pi / 5
-        rad = r if i % 2 == 0 else r * 0.42
-        pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
-    draw.polygon(pts, fill=fill)
+def five_star(draw, cx, cy, radius, fill):
+    """Star polygon: 10 vertices alternating outer/inner radius."""
+    verts = []
+    for step in range(10):
+        angle = -math.pi / 2 + step * math.pi / 5
+        rad = radius if step % 2 == 0 else radius * 0.42
+        verts.append((cx + rad * math.cos(angle), cy + rad * math.sin(angle)))
+    draw.polygon(verts, fill=fill)
 
 
-# ---------------------------------------------------------------- icons
-def icon_scales(draw, x, y, s, fg):
-    draw.line([(x + s / 2, y + 8), (x + s / 2, y + s - 22)], fill=fg, width=5)
+def shrink_to_fit(draw, text, fnt_maker, limit, start, floor):
+    """Largest font size (from start down to floor) whose text fits limit."""
+    size = start
+    while size > floor:
+        fnt = fnt_maker(size)
+        if draw.textlength(text, font=fnt) <= limit:
+            return fnt
+        size -= 1
+    return fnt_maker(floor)
+
+
+# ------------------------------------------------------------- tile art
+def art_scales(draw, x, y, s, fg):
+    mid = x + s / 2
+    draw.ellipse([mid - 6, y + 4, mid + 6, y + 16], fill=fg)
+    draw.line([(mid, y + 10), (mid, y + s - 22)], fill=fg, width=5)
     draw.line([(x + 12, y + 22), (x + s - 12, y + 22)], fill=fg, width=5)
-    draw.ellipse([x + s / 2 - 6, y + 4, x + s / 2 + 6, y + 16], fill=fg)
     for cx in (x + 16, x + s - 16):
         draw.line([(cx, y + 22), (cx, y + s - 34)], fill=fg, width=3)
-        draw.arc([cx - 20, y + s - 46, cx + 20, y + s - 14], 0, 180, fill=fg, width=4)
-    draw.line([(x + s / 2 - 16, y + s - 16), (x + s / 2 + 16, y + s - 16)], fill=fg, width=5)
+        draw.arc([cx - 20, y + s - 46, cx + 20, y + s - 14], 0, 180,
+                 fill=fg, width=4)
+    draw.line([(mid - 16, y + s - 16), (mid + 16, y + s - 16)], fill=fg, width=5)
 
 
-def icon_chart(draw, x, y, s, fg):
-    bw = 14
-    heights = [26, 40, 32, 56]
-    for i, hgt in enumerate(heights):
+def art_chart(draw, x, y, s, fg):
+    for i, tall in enumerate((26, 40, 32, 56)):
         bx = x + 14 + i * 22
-        draw.rectangle([bx, y + s - 18 - hgt, bx + bw, y + s - 18], fill=fg)
-    draw.line(
-        [(x + 10, y + s - 46), (x + s - 12, y + 14)],
-        fill=fg,
-        width=5,
-    )
-    draw.polygon(
-        [(x + s - 12, y + 14), (x + s - 28, y + 16), (x + s - 14, y + 30)],
-        fill=fg,
-    )
+        draw.rectangle([bx, y + s - 18 - tall, bx + 14, y + s - 18], fill=fg)
+    draw.line([(x + 10, y + s - 46), (x + s - 12, y + 14)], fill=fg, width=5)
+    draw.polygon([(x + s - 12, y + 14), (x + s - 28, y + 16),
+                  (x + s - 14, y + 30)], fill=fg)
 
 
-def icon_star_big(draw, x, y, s, fg):
-    star(draw, x + s / 2, y + s / 2, s * 0.42, fg)
+def art_star(draw, x, y, s, fg):
+    five_star(draw, x + s / 2, y + s / 2, s * 0.42, fg)
 
 
-def icon_globe(draw, x, y, s, fg):
+def art_globe(draw, x, y, s, fg):
     cx, cy = x + s / 2, y + s / 2
     r = s * 0.38
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=fg, width=5)
-    draw.ellipse([cx - r * 0.45, cy - r, cx + r * 0.45, cy + r], outline=fg, width=4)
+    draw.ellipse([cx - r * 0.45, cy - r, cx + r * 0.45, cy + r],
+                 outline=fg, width=4)
     draw.line([(cx - r, cy), (cx + r, cy)], fill=fg, width=4)
-    draw.arc([cx - r, cy - r * 0.55, cx + r, cy + r * 0.55], 0, 360, fill=fg, width=4)
+    draw.arc([cx - r, cy - r * 0.55, cx + r, cy + r * 0.55], 0, 360,
+             fill=fg, width=4)
 
 
-def icon_doc(draw, x, y, s, fg):
+def art_doc(draw, x, y, s, fg):
     draw.rectangle([x + 16, y + 8, x + s - 16, y + s - 8], outline=fg, width=5)
-    for i, ly in enumerate((y + 26, y + 44, y + 62)):
+    for ly in (y + 26, y + 44, y + 62):
         draw.line([(x + 26, ly), (x + s - 26, ly)], fill=fg, width=4)
     draw.line([(x + 26, y + s - 24), (x + s - 40, y + s - 24)], fill=fg, width=4)
 
 
-def icon_cross(draw, x, y, s, fg):
-    draw.rectangle([x + s / 2 - 10, y + 12, x + s / 2 + 10, y + s - 12], fill=fg)
+def art_cross(draw, x, y, s, fg):
+    mid = x + s / 2
+    draw.rectangle([mid - 10, y + 12, mid + 10, y + s - 12], fill=fg)
     draw.rectangle([x + 12, y + s / 2 - 10, x + s - 12, y + s / 2 + 10], fill=fg)
 
 
-# ---------------------------------------------------------------- page
-def build():
-    img = Image.new("RGB", (W, H), PAPER)
-    d = ImageDraw.Draw(img)
+STORIES = [
+    ("red", art_chart, "AI STOCK ROUT",
+     "S&P 500 falls into correction; Nasdaq erases 2026 gains."),
+    ("amber", art_star, "GTA VI SMASHES RECORDS",
+     "$3.8bn first-day sales — the biggest launch ever."),
+    ("navy", art_scales, "MYANMAR VERDICT",
+     "Rohingya survivors recount the 2017 exodus as the Hague confirms genocide."),
+    ("teal", art_globe, "COP31 RUNS OVERTIME",
+     "Climate talks in Antalya stall over fossil fuels."),
+    ("slate", art_doc, "UK-EU DEAL SIGNED",
+     "Biggest post-Brexit agreements struck in Brussels."),
+    ("indigo", art_cross, "CANCER BREAKTHROUGH",
+     "Pill makes pancreatic tumours undetectable in 1 in 12."),
+]
 
-    f_mast = font(SERIF_B, 56)
-    f_date = font(SANS_B, 23)
-    f_kick = font(SANS_B, 22)
-    f_hero = font(SERIF_B, 60)
-    f_sub = font(SANS, 25)
-    f_label = font(SANS_B, 18)
-    f_head = font(SANS_B, 26)
-    f_sum = font(SANS, 20)
-    f_tick = font(SANS, 20)
-    f_foot = font(SANS_B, 18)
-    f_stat = font(SANS_B, 34)
-    f_statlab = font(SANS_B, 16)
+HERO_STATS = [
+    ("400+", "DRONES FIRED"),
+    ("110", "MISSILES"),
+    ("8", "KILLED IN KYIV"),
+]
 
-    # Masthead
-    d.rectangle([0, 0, W, 96], fill=INK)
-    d.text((28, 20), "THE WORLD TODAY", font=f_mast, fill=(255, 255, 255))
-    right = "21 NOV 2026"
-    d.text((W - 28 - d.textlength(right, font=f_date), 34), right,
-           font=f_date, fill=(255, 255, 255))
-    d.rectangle([0, 96, W, 102], fill=RED)
-    centered(d, W // 2, 116, "SATURDAY, 21 NOVEMBER 2026  \u2022  WORLD NEWS IN ONE PAGE",
-             f_date, fill=INK)
-    d.line([(28, 150), (W - 28, 150)], fill=INK, width=2)
+TICKER = ("ALSO: Shenzhen declaration follow-up  \u2022  Saudi intercepts "
+          "3 Houthi missiles  \u2022  Gaza strikes continue  \u2022  "
+          "Bitcoin slides toward $62K")
 
-    # Hero
-    d.rectangle([28, 164, W - 28, 470], outline=RULE, width=2, fill=CARD)
-    centered(d, W // 2, 182, "KYIV  \u2022  WARSAW  \u2022  RUSSIA'S BIGGEST BARRAGE", f_kick, fill=RED)
-    centered(d, W // 2, 212, "MISSILES LAND", f_hero)
-    centered(d, W // 2, 276, "IN POLAND", f_hero)
-    sub = "Russia fires 400+ drones and 110 missiles at Ukraine; two missiles come down in Poland."
-    sub_size = 24
-    f_sub2 = font(SANS, sub_size)
-    while d.textlength(sub, font=f_sub2) > W - 56 and sub_size > 18:
-        sub_size -= 1
-        f_sub2 = font(SANS, sub_size)
-    centered(d, W // 2, 344, sub, f_sub2)
-    stats = [
-        ("400+", "DRONES FIRED"),
-        ("110", "MISSILES"),
-        ("8", "KILLED IN KYIV"),
-    ]
+
+def masthead(d):
+    d.rectangle([0, 0, PAGE_W, 96], fill=PAL["ink"])
+    d.text((MARGIN, 20), "THE WORLD TODAY", font=serif_b(56), fill=PAL["white"])
+    stamp = "21 NOV 2026"
+    f_stamp = sans_b(23)
+    d.text((PAGE_W - MARGIN - d.textlength(stamp, font=f_stamp), 34), stamp,
+           font=f_stamp, fill=PAL["white"])
+    d.rectangle([0, 96, PAGE_W, 102], fill=PAL["red"])
+    put_centered(d, "SATURDAY, 21 NOVEMBER 2026  \u2022  WORLD NEWS IN ONE PAGE",
+                 116, sans_b(23), PAGE_W // 2, PAL["ink"])
+    d.line([(MARGIN, 150), (PAGE_W - MARGIN, 150)], fill=PAL["ink"], width=2)
+
+
+def hero(d):
+    top, bottom = 164, 470
+    d.rectangle([MARGIN, top, PAGE_W - MARGIN, bottom], outline=PAL["rule"],
+                width=2, fill=PAL["panel"])
+    put_centered(d, "KYIV  \u2022  WARSAW  \u2022  RUSSIA'S BIGGEST BARRAGE",
+                 182, sans_b(22), PAGE_W // 2, PAL["red"])
+    put_centered(d, "MISSILES LAND", 212, serif_b(60), PAGE_W // 2, PAL["ink"])
+    put_centered(d, "IN POLAND", 276, serif_b(60), PAGE_W // 2, PAL["ink"])
+    sub = ("Russia fires 400+ drones and 110 missiles at Ukraine; "
+           "two missiles come down in Poland.")
+    f_sub = shrink_to_fit(d, sub, sans, PAGE_W - 56, 24, 18)
+    put_centered(d, sub, 344, f_sub, PAGE_W // 2, PAL["ink"])
     bw, bh = 200, 62
-    total = 3 * bw + 2 * 40
-    sx = (W - total) // 2
-    sy = 388
-    for i, (num, label) in enumerate(stats):
-        x = sx + i * (bw + 40)
-        d.rectangle([x, sy, x + bw, sy + bh], outline=INK, width=2, fill=(255, 255, 255))
-        centered(d, x + bw // 2, sy + 6, num, f_stat, fill=RED)
-        centered(d, x + bw // 2, sy + 40, label, f_statlab)
+    span = 3 * bw + 2 * 40
+    left = (PAGE_W - span) // 2
+    for i, (num, label) in enumerate(HERO_STATS):
+        x = left + i * (bw + 40)
+        d.rectangle([x, 388, x + bw, 388 + bh], outline=PAL["ink"], width=2,
+                    fill=PAL["white"])
+        put_centered(d, num, 394, sans_b(34), x + bw // 2, PAL["red"])
+        put_centered(d, label, 428, sans_b(16), x + bw // 2, PAL["ink"])
 
-    # Story grid: 2 columns x 3 rows
-    stories = [
-        (RED, icon_chart, "AI STOCK ROUT",
-         "S&P 500 falls into correction; Nasdaq erases 2026 gains."),
-        (AMBER, icon_star_big, "GTA VI SMASHES RECORDS",
-         "$3.8bn first-day sales — the biggest launch ever."),
-        (NAVY, icon_scales, "MYANMAR VERDICT",
-         "Rohingya survivors recount the 2017 exodus as the Hague confirms genocide."),
-        (TEAL, icon_globe, "COP31 RUNS OVERTIME",
-         "Climate talks in Antalya stall over fossil fuels."),
-        (SLATE, icon_doc, "UK-EU DEAL SIGNED",
-         "Biggest post-Brexit agreements struck in Brussels."),
-        (INDIGO, icon_cross, "CANCER BREAKTHROUGH",
-         "Pill makes pancreatic tumours undetectable in 1 in 12."),
-    ]
+
+def story_card(d, x, y, w, h, color, art, head, summ):
+    d.rectangle([x, y, x + w, y + h], fill=PAL["panel"], outline=PAL["rule"],
+                width=2)
+    d.rectangle([x + 12, y + 16, x + 122, y + 126], fill=PAL[color])
+    art(d, x + 22, y + 26, 90, PAL["white"])
+    tx = x + 134
+    tw = w - 134 - 12
+    f_head, f_sum = sans_b(26), sans(20)
+    ly = y + 14
+    for line in split_lines(d, head, f_head, tw)[:2]:
+        d.text((tx, ly), line, font=f_head, fill=PAL["ink"])
+        ly += 30
+    sy = ly + 4
+    for line in split_lines(d, summ, f_sum, tw)[:3]:
+        d.text((tx, sy), line, font=f_sum, fill=PAL["soft"])
+        sy += 24
+
+
+def story_grid(d):
     cw, chh, gap = 464, 142, 12
-    for i, (color, icon, head, summ) in enumerate(stories):
+    for i, (color, art, head, summ) in enumerate(STORIES):
         col, row = i % 2, i // 2
-        x = 28 + col * (cw + gap)
-        y = 486 + row * (chh + gap)
-        d.rectangle([x, y, x + cw, y + chh], fill=CARD, outline=RULE, width=2)
-        d.rectangle([x + 12, y + 16, x + 122, y + 126], fill=color)
-        icon(d, x + 22, y + 26, 90, (255, 255, 255))
-        tx = x + 134
-        tw = cw - 134 - 12
-        lines = wrap(d, head, f_head, tw)
-        ly = y + 14
-        for ln in lines[:2]:
-            d.text((tx, ly), ln, font=f_head, fill=INK)
-            ly += 30
-        slines = wrap(d, summ, f_sum, tw)
-        sy = ly + 4
-        for ln in slines[:3]:
-            d.text((tx, sy), ln, font=f_sum, fill=(60, 60, 60))
-            sy += 24
+        story_card(d, MARGIN + col * (cw + gap), 486 + row * (chh + gap),
+                   cw, chh, color, art, head, summ)
 
-    # Ticker
-    d.rectangle([28, 946, W - 28, 986], fill=(233, 227, 212))
-    ticker = ("ALSO: Shenzhen declaration follow-up  \u2022  Saudi intercepts 3 Houthi missiles  "
-              "\u2022  Gaza strikes continue  \u2022  Bitcoin slides toward $62K")
-    tick_size = 20
-    f_tick = font(SANS, tick_size)
-    while d.textlength(ticker, font=f_tick) > W - 56 and tick_size > 14:
-        tick_size -= 1
-        f_tick = font(SANS, tick_size)
-    centered(d, W // 2, 956, ticker, f_tick)
-    d.line([(28, 996), (W - 28, 996)], fill=RULE, width=2)
-    centered(d, W // 2, 1002, "WORLD NEWS  \u2022  SATURDAY 21 NOVEMBER 2026",
-             font(SANS_B, 17), fill=GREY)
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    img.save(os.path.join(OUT_DIR, "entry.png"), format="PNG")
-    return os.path.join(OUT_DIR, "entry.png")
+def ticker(d):
+    d.rectangle([MARGIN, 946, PAGE_W - MARGIN, 986], fill=PAL["ticker"])
+    f_tick = shrink_to_fit(d, TICKER, sans, PAGE_W - 56, 20, 14)
+    put_centered(d, TICKER, 956, f_tick, PAGE_W // 2, PAL["ink"])
+    d.line([(MARGIN, 996), (PAGE_W - MARGIN, 996)], fill=PAL["rule"], width=2)
+    put_centered(d, "WORLD NEWS  \u2022  SATURDAY 21 NOVEMBER 2026",
+                 1002, sans_b(17), PAGE_W // 2, PAL["grey"])
+
+
+def build():
+    img = Image.new("RGB", (PAGE_W, PAGE_H), PAL["paper"])
+    d = ImageDraw.Draw(img)
+    masthead(d)
+    hero(d)
+    story_grid(d)
+    ticker(d)
+    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, "entry.png")
+    img.save(path, format="PNG")
+    return path
 
 
 if __name__ == "__main__":
